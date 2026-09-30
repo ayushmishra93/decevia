@@ -1,0 +1,376 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  name            String?
+  username        String?   @unique
+  email           String?   @unique
+  emailVerified   DateTime?
+  passwordHash    String?
+  image           String?
+  provider        String?   @default("credentials")
+  role            String    @default("analyst")
+  bio             String?
+  jobTitle        String?
+  organization    String?
+  location        String?
+  termsAcceptedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  protectedAssets        ProtectedAsset[]
+  trafficEvents          TrafficEvent[]
+  attackSessions         AttackSession[]    @relation("SessionOwner")
+  assignedAttackSessions AttackSession[]    @relation("SessionAnalyst")
+  ghostEnvironments      GhostEnvironment[]
+  alerts                 Alert[]            @relation("AlertOwner")
+  assignedAlerts         Alert[]            @relation("AlertAnalyst")
+  indicators             ThreatIndicator[]
+  reports                Report[]
+  notifications          Notification[]
+  auditLogs              AuditLog[]
+  settings               UserSettings?
+  apiKeys                ApiKey[]
+  simulation             SimulationState?
+  mutations              MutationReceipt[]
+  accounts               Account[]
+  sessions               Session[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model RateLimit {
+  id      String   @id
+  count   Int
+  expires DateTime
+
+  @@index([expires])
+}
+
+model ProtectedAsset {
+  id              String          @id @default(cuid())
+  name            String
+  assetType       String
+  hostname        String
+  maskedIpAddress String
+  operatingSystem String
+  environment     String
+  status          String          @default("ACTIVE")
+  ownerId         String
+  owner           User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  simulated       Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  trafficEvents   TrafficEvent[]
+  attackSessions  AttackSession[]
+
+  @@unique([ownerId, hostname])
+  @@index([ownerId, status])
+}
+
+model TrafficEvent {
+  id               String         @id @default(cuid())
+  ownerId          String
+  owner            User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  timestamp        DateTime       @default(now())
+  sourceIp         String
+  sourceCountry    String
+  requestPath      String
+  requestMethod    String
+  protocol         String
+  userAgent        String
+  eventType        String
+  riskScore        Int
+  decision         String
+  status           String
+  simulated        Boolean        @default(false)
+  protectedAssetId String
+  protectedAsset   ProtectedAsset @relation(fields: [protectedAssetId], references: [id], onDelete: Restrict)
+  attackSessionId  String?
+  attackSession    AttackSession? @relation(fields: [attackSessionId], references: [id], onDelete: SetNull)
+  metadata         Json           @default("{}")
+  riskDecision     RiskDecision?
+  alerts           Alert[]
+
+  @@index([ownerId, timestamp])
+  @@index([ownerId, riskScore])
+  @@index([ownerId, decision, status])
+  @@index([ownerId, sourceIp, timestamp])
+  @@index([protectedAssetId])
+  @@index([attackSessionId])
+}
+
+model RiskDecision {
+  id             String       @id @default(cuid())
+  trafficEventId String       @unique
+  trafficEvent   TrafficEvent @relation(fields: [trafficEventId], references: [id], onDelete: Cascade)
+  score          Int
+  decision       String
+  explanation    String
+  matchedRules   Json
+  simulated      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+}
+
+model AttackSession {
+  id                 String            @id @default(cuid())
+  ownerId            String
+  owner              User              @relation("SessionOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  sessionCode        String            @unique
+  sourceIp           String
+  sourceCountry      String
+  attackType         String
+  riskScore          Int
+  status             String            @default("ACTIVE")
+  startedAt          DateTime          @default(now())
+  endedAt            DateTime?
+  ghostEnvironmentId String?
+  ghostEnvironment   GhostEnvironment? @relation(fields: [ghostEnvironmentId], references: [id], onDelete: Restrict)
+  protectedAssetId   String
+  protectedAsset     ProtectedAsset    @relation(fields: [protectedAssetId], references: [id], onDelete: Restrict)
+  assignedAnalystId  String?
+  assignedAnalyst    User?             @relation("SessionAnalyst", fields: [assignedAnalystId], references: [id], onDelete: SetNull)
+  simulated          Boolean           @default(false)
+  trafficEvents      TrafficEvent[]
+  actions            SessionAction[]
+  alerts             Alert[]
+
+  @@index([ownerId, status, startedAt])
+  @@index([ownerId, riskScore])
+  @@index([ghostEnvironmentId])
+  @@index([protectedAssetId])
+  @@index([assignedAnalystId])
+}
+
+model SessionAction {
+  id              String        @id @default(cuid())
+  attackSessionId String
+  attackSession   AttackSession @relation(fields: [attackSessionId], references: [id], onDelete: Cascade)
+  timestamp       DateTime      @default(now())
+  actionType      String
+  commandText     String?
+  filePath        String?
+  result          String
+  severity        String
+  metadata        Json          @default("{}")
+  simulated       Boolean       @default(false)
+
+  @@index([attackSessionId, timestamp])
+}
+
+model GhostEnvironment {
+  id              String          @id @default(cuid())
+  name            String
+  operatingSystem String
+  serviceTemplate String
+  networkProfile  String
+  simulationLevel String
+  loggingLevel    String
+  status          String          @default("STOPPED")
+  isolationStatus String          @default("SIMULATED_ISOLATION")
+  cpuUsage        Float           @default(0)
+  memoryUsage     Float           @default(0)
+  createdById     String
+  createdBy       User            @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  simulated       Boolean         @default(true)
+  attackSessions  AttackSession[]
+  alerts          Alert[]
+
+  @@unique([createdById, name])
+  @@index([createdById, status])
+}
+
+model Alert {
+  id                 String            @id @default(cuid())
+  ownerId            String
+  owner              User              @relation("AlertOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  title              String
+  description        String
+  severity           String
+  category           String
+  source             String
+  status             String            @default("OPEN")
+  assignedUserId     String?
+  assignedUser       User?             @relation("AlertAnalyst", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  trafficEventId     String?
+  trafficEvent       TrafficEvent?     @relation(fields: [trafficEventId], references: [id], onDelete: SetNull)
+  attackSessionId    String?
+  attackSession      AttackSession?    @relation(fields: [attackSessionId], references: [id], onDelete: SetNull)
+  ghostEnvironmentId String?
+  ghostEnvironment   GhostEnvironment? @relation(fields: [ghostEnvironmentId], references: [id], onDelete: SetNull)
+  createdAt          DateTime          @default(now())
+  acknowledgedAt     DateTime?
+  resolvedAt         DateTime?
+  resolutionNotes    String?
+  simulated          Boolean           @default(false)
+
+  @@index([ownerId, status, createdAt])
+  @@index([ownerId, severity])
+  @@index([assignedUserId])
+  @@index([trafficEventId])
+  @@index([attackSessionId])
+  @@index([ghostEnvironmentId])
+}
+
+model ThreatIndicator {
+  id              String   @id @default(cuid())
+  ownerId         String
+  owner           User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  indicatorType   String
+  value           String
+  confidence      Int
+  severity        String
+  firstSeen       DateTime @default(now())
+  lastSeen        DateTime @default(now())
+  occurrenceCount Int      @default(1)
+  description     String
+  metadata        Json     @default("{}")
+  simulated       Boolean  @default(false)
+
+  @@unique([ownerId, indicatorType, value, simulated])
+  @@index([ownerId, lastSeen])
+}
+
+model Report {
+  id            String   @id @default(cuid())
+  name          String
+  reportType    String
+  dateFrom      DateTime
+  dateTo        DateTime
+  status        String   @default("READY")
+  generatedById String
+  generatedBy   User     @relation(fields: [generatedById], references: [id], onDelete: Cascade)
+  fileUrl       String?
+  snapshot      Json
+  simulated     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([generatedById, createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String
+  read      Boolean  @default(false)
+  simulated Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read, createdAt])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action       String
+  resourceType String
+  resourceId   String?
+  ipAddress    String?
+  userAgent    String?
+  metadata     Json     @default("{}")
+  simulated    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, resourceType, resourceId])
+}
+
+model UserSettings {
+  userId                  String   @id
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notificationPreferences Json     @default("{\"alerts\":true,\"simulation\":true}")
+  detectionSensitivity    Int      @default(50)
+  monitorThreshold        Int      @default(25)
+  divertThreshold         Int      @default(60)
+  blockThreshold          Int      @default(90)
+  ghostDefaults           Json     @default("{}")
+  retentionDays           Int      @default(90)
+  theme                   String   @default("dark")
+  updatedAt               DateTime @updatedAt
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  keyHash    String    @unique
+  prefix     String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([userId])
+}
+
+model SimulationState {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  running   Boolean  @default(false)
+  speed     Int      @default(1)
+  lastTick  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MutationReceipt {
+  id          String   @id
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fingerprint String
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+}

@@ -1,0 +1,4 @@
+import { currentUser } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { sameOrigin,limit,body,errorResponse } from '@/lib/security';
+export async function DELETE(request){try{sameOrigin(request);const user=await currentUser();if(!user)return Response.json({error:'Sign in required.'},{status:401});await limit(`accounts:${user.id}`,10);const {provider}=await body(request);if(!['google','github'].includes(provider))return Response.json({error:'Invalid provider.'},{status:400});await prisma.$transaction(async tx=>{await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`;const accounts=await tx.account.findMany({where:{userId:user.id}});if(!user.passwordHash&&accounts.length<=1)throw Object.assign(new Error('Keep at least one sign-in method connected.'),{status:400});await tx.account.deleteMany({where:{userId:user.id,provider}});});return Response.json({ok:true});}catch(error){return errorResponse(error)}}
